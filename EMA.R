@@ -53,9 +53,20 @@ SPdata <- SPdata |>
   mutate(ATR = pmax(range, hc_yest, lc_yest, na.rm = TRUE))
 SPdata$atr_EMA <- ewmaRcpp(SPdata$ATR, 20)
 
+# start the optimization here, right here
+steamroller <- data.frame(matrix(ncol = 20, nrow = 20))
+steampnl <- data.frame(matrix(ncol = 20, nrow = 20))
+
+SPdata_orig <- SPdata
+
+for(slow in 1:5){
+  for(fast in 1:3){
+
+SPdata <- SPdata_orig
+
 # calculate exponential moving averages for low pass filter trade signals
-slow_lag <- 150 # 150/15 generates $2,303,931.25
-fast_lag <- 15  # 325/85 yields $12,551,818.75
+slow_lag <- slow * 30 # 150/15 generates $2,303,931.25
+fast_lag <- fast * 15  # 325/85 yields $12,551,818.75
 SPdata$slow <- ewmaRcpp(SPdata$close, slow_lag)
 SPdata$fast <- ewmaRcpp(SPdata$close, fast_lag)
 
@@ -139,7 +150,10 @@ ratio <- end_value/ start_value
 start_date <- min(SPdata$date)
 end_date <- max(SPdata$date)
 date_range <- as.numeric(difftime(end_date, start_date, units = "days")) / 365.25
-ICAGR <- log(ratio)/ date_range
+ICAGR <- if(ratio <= 0) 0 else log(ratio)/ date_range
+steamroller[slow, fast] <- ICAGR
+steampnl[slow, fast] <- sum(trades$pnl)
+
 trades$retrace <- 0
 for (i in 1:nrow(trades)) {
   filtered_data <- SPdata %>%
@@ -147,6 +161,10 @@ for (i in 1:nrow(trades)) {
 
   if (nrow(filtered_data) > 0) {
     trades$retrace[i] <- min(filtered_data$low)
+  }
+}
+
+
   }
 }
 
