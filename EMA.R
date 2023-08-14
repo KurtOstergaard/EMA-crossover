@@ -59,14 +59,14 @@ steampnl <- data.frame(matrix(ncol = 20, nrow = 20))
 
 SPdata_orig <- SPdata
 
-for(slow in 1:5){
-  for(fast in 1:3){
+# for(slow in 1:5){
+#   for(fast in 1:3){
 
 SPdata <- SPdata_orig
 
 # calculate exponential moving averages for low pass filter trade signals
-slow_lag <- slow * 30 # 150/15 generates $2,303,931.25
-fast_lag <- fast * 15  # 325/85 yields $12,551,818.75
+slow_lag <-  150 # slow * 30 # 150/15 generates $2,303,931.25
+fast_lag <- 15 # fast * 15  # 325/85 yields $12,551,818.75
 SPdata$slow <- ewmaRcpp(SPdata$close, slow_lag)
 SPdata$fast <- ewmaRcpp(SPdata$close, fast_lag)
 
@@ -74,26 +74,27 @@ SPdata$fast <- ewmaRcpp(SPdata$close, fast_lag)
 SPdata <- SPdata |>
   mutate(cross = fast - slow)
 
-# drop first 25 rows to let EMA `warm up`
-SPdata <-  slice(SPdata, 26:n())
-
 # create trades from signals
 SPdata <- SPdata |>
   mutate(on = ifelse(cross > 0 & lag(cross) < 0, 1, 0),
          off = ifelse(cross < 0 & lag(cross) > 0, -1, 0),
          signal = on + off)
+if(SPdata$cross[1] > 0) SPdata$on[1] = 1
+
+# drop first 25 rows to let EMA `warm up`
+SPdata <-  slice(SPdata, 26:n())
 
 # buy trade details
 SPdata <- SPdata |>
   mutate( buy_date = ifelse(on == 1, as_date(lead(date)), 0),
           buy_price = ifelse(on == 1,
-          (lead(open) + lead(high))/2, 0))
+          (lead(open) + lead(high))/2, 0),
+          buy_amount = 0)
 
 # sell trade details
 SPdata <- SPdata |>
   mutate(sell_date = ifelse(off == -1, as_date(lead(date)), 0),
-         sell_price = ifelse(off == -1,
-                             (lead(open) + lead(low))/2, 0))
+         sell_price = ifelse(off == -1, (lead(open) + lead(low))/2, 0))
 
 # Close out last trade if long when time (actually, data file) runs out
 if (SPdata$cross[nrow(SPdata)] > 0) {
@@ -101,6 +102,34 @@ if (SPdata$cross[nrow(SPdata)] > 0) {
   SPdata$sell_date[nrow(SPdata)] <- SPdata$date[nrow(SPdata)]
   SPdata$sell_price[nrow(SPdata)] <- SPdata$close[nrow(SPdata)]
 }
+
+# Equity columns
+SPdata$closed_pnl <- 1e6
+SPdata$open_pnl <- 0
+SPdata$equity <- SPdata$closed_pnl
+start_value <- 1e6
+buy_amount <- 0
+buy_price <- 0
+risk_budget <- 0.1  # aka Heat, is 10% of the book equity for each trade
+ATR_multiplier <- 5 # dynamic risk sizing based on current volatility via ATR
+
+for (i in seq_len(nrow(SPdata))){
+  SPdata$open_pnl[i] = (SPdata$close[i] - buy_price) * buy_amount
+  SPdata$equity[i] <- SPdata$open_pnl[i] + SPdata$closed_pnl[i]
+  if(SPdata$signal[i] == 1){
+    buy_amount = plyr::round_any((SPdata$closed_pnl[[i]] *
+         risk_budget) / (ATR_multiplier * SPdata$atr_EMA[[i]]), 250, f = round)
+    SPdata$buy_amount[i] = buy_amount
+    buy_price = SPdata$buy_price[i]
+  }
+  if(SPdata$signal[i] == -1){
+    # closed_pnl = closed_pnl[i-1] + (sell_price - buy_price) * buy_amount
+    # buy_amount = 0
+
+  }
+}
+
+
 
 # Trade tables
 buys <- SPdata |>
@@ -123,9 +152,6 @@ trades <- trades |>
           buy_amt = 0,
           pnl = 0)
 
-start_value <- 1e6
-risk_budget <- 0.1  # aka Heat, is 10% of the book equity for each trade
-ATR_multiplier <- 5 # dynamic risk sizing based on current volatility via ATR
 
 # calculate first row
 trades$buy_amt[[1]] <- plyr::round_any((trades$closed_pnl[[1]] *
@@ -165,7 +191,8 @@ for (i in 1:nrow(trades)) {
 }
 
 
-  }
-}
+#   }
+# }
 
 print(sum(trades$pnl))
+
