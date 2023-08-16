@@ -4,6 +4,7 @@ library(tidyverse)
 library(lubridate)
 library(tidyquant)
 library(Rcpp)
+library(plotly)
 
 # C code for EMA calculation with no leading NA
 sourceCpp(
@@ -48,12 +49,13 @@ SPdata <- SPdata |>
 SPdata$atr_EMA <- ewmaRcpp(SPdata$ATR, 20)
 
 # optimization section
-steamroller <- data.frame(matrix(ncol = 8, nrow = 8))
-steampnl <- data.frame(matrix(ncol = 8, nrow = 8))
+steamroller <- data.frame(matrix(ncol = 20, nrow = 20))
+steampnl <- data.frame(matrix(ncol = 20, nrow = 20))
+steamtest <- data.frame(matrix(ncol = 20, nrow = 20))
 SPdata_orig <- SPdata
 
-for(slow in 1:8){
- for(fast in 1:8){
+for(slow in 1:20){
+ for(fast in 1:20){
 
 SPdata <- SPdata_orig
 
@@ -67,16 +69,16 @@ SPdata$fast <- ewmaRcpp(SPdata$close, fast_lag)
 SPdata <- SPdata |>
   mutate(cross = fast - slow,
          on = ifelse(cross > 0 & lag(cross) < 0, 1, 0),
-         off = ifelse(cross < 0 & lag(cross) > 0, -1, 0),
-         signal = on + off)
+         off = ifelse(cross < 0 & lag(cross) > 0, -1, 0))
 
 # drop first 25 rows to let EMA `warm up`
 SPdata <-  slice(SPdata, 26:n())
 
 # trade details
-if(SPdata$cross[1] > 0) SPdata$on[1] = 1
+if(SPdata$cross[1] > 0) SPdata$on[1] <- 1
 SPdata <- SPdata |>
-  mutate( buy_date = ifelse(on == 1, as_date(lead(date)), 0),
+  mutate( signal = on + off,
+          buy_date = ifelse(on == 1, as_date(lead(date)), 0),
           buy_price = ifelse(on == 1, (lead(open) + lead(high))/2, 0),
           buy_amount = 0,
           sell_date = ifelse(off == -1, as_date(lead(date)), 0),
@@ -84,9 +86,10 @@ SPdata <- SPdata |>
 
 # Close out last trade if long when data file runs out
 if (SPdata$cross[nrow(SPdata)] > 0) {
-  SPdata$off[nrow(SPdata)] <- -1
-  SPdata$sell_date[nrow(SPdata)] <- SPdata$date[nrow(SPdata)]
-  SPdata$sell_price[nrow(SPdata)] <- SPdata$close[nrow(SPdata)]
+    SPdata$off[nrow(SPdata)] <- -1
+    SPdata$sell_date[nrow(SPdata)] <- SPdata$date[nrow(SPdata)]
+    SPdata$sell_price[nrow(SPdata)] <- SPdata$close[nrow(SPdata)]
+    SPdata$signal[nrow(SPdata)] <- -1
 }
 
 # Equity columns
@@ -117,48 +120,27 @@ for (i in seq_len(nrow(SPdata))){
   }
   SPdata$equity[i] <- SPdata$open_pnl[i] + SPdata$closed_pnl[i]
 }
+trade_test <- sum(SPdata$signal)
+steamtest[slow, fast] <- trade_test
+if(trade_test == 0) {
+  # Trade tables
+  buys <- SPdata |>
+    select(on, buy_date, buy_price, buy_amount) |>
+    filter(on == 1) |>
+    select(!on)
 
-# Trade tables
-buys <- SPdata |>
-  select(atr_EMA:buy_price) |>
-  filter(on == 1) |>
-  select(starts_with("buy"), atr_EMA)
+  sells <- SPdata |>
+    select(off, sell_date:closed_pnl) |>
+    filter(off == -1) |>
+    select(!off)
 
-sells <- SPdata |>
-  select(on:sell_price) |>
-  filter(off == -1) |>
-  select(starts_with("sell"))
-
-trades <- bind_cols(sells, buys)
-trades$buy_date <- as.Date(as.numeric(trades$buy_date))
-trades$sell_date <- as.Date(as.numeric(trades$sell_date))
-
-# calculate trade size based on pnl and book equity
-trades <- trades |>
-  mutate( closed_pnl = 1e6,    # $1,000,000 starting value
-          buy_amt = 0,
-          pnl = 0)
-
-
-# calculate first row
-trades$buy_amt[[1]] <- plyr::round_any((trades$closed_pnl[[1]] *
-        heat) / (ATR_multiplier * trades$atr_EMA[[1]]), 250, f = round)
-trades$pnl[[1]] = (trades$sell_price[[1]] - trades$buy_price[[1]]) *
-  trades$buy_amt[[1]]
-
-# calculate the rest of the trade table
-for (i in 2:nrow(trades)){
-  trades$closed_pnl[[i]] <- trades$closed_pnl[[i-1]] + trades$pnl[[i-1]]
-
-  trades$buy_amt[[i]] <- plyr::round_any((trades$closed_pnl[[i]] *
-       heat) / (ATR_multiplier * trades$atr_EMA[[i]]), 250, f = round)
-
-  trades$pnl[[i]] <- (trades$sell_price[[i]] - trades$buy_price[[i]]) *
-    trades$buy_amt[[i]]
+  trades <- bind_cols(buys, sells)
+  trades$buy_date <- as.Date(as.numeric(trades$buy_date))
+  trades$sell_date <- as.Date(as.numeric(trades$sell_date))
 }
 
 # return calculation
-end_value <- sum(trades$pnl) + start_value
+end_value <- SPdata$equity[nrow(SPdata)]
 ratio <- end_value/ start_value
 start_date <- min(SPdata$date)
 end_date <- max(SPdata$date)
@@ -171,8 +153,6 @@ steampnl[slow, fast] <- end_value
  }  # optimization loop
 }   # optimization loop
 
-print(sum(trades$pnl))
-
 # pretty graph
 SPdata |>
   ggplot(aes(x = date, y = close)) +
@@ -180,4 +160,9 @@ SPdata |>
   geom_smooth(method = "lm")
 steamroller
 steampnl
-
+v <- plot_ly(z = volcano, type = "surface")
+v
+p <- plot_ly(z = steampnl, type = "surface")
+p
+q <- plot_ly(z = steamroller, type = "surface")
+q
