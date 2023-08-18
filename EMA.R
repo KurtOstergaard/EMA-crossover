@@ -5,6 +5,7 @@ library(lubridate)
 library(tidyquant)
 library(plotly)
 library(Rcpp)
+library(profvis)
 
 # C code for EMA calculation with no leading NA
 sourceCpp(
@@ -48,8 +49,10 @@ SPdata <- SPdata |>
 SPdata$atr_EMA <- ewmaRcpp(SPdata$ATR, 20)
 SPdata_orig <- SPdata
 
+profvis({
+
 # optimization section
-runs <- expand.grid(fast = c(15, 85), slow = c(150, 325))
+runs <- expand.grid(fast = seq(15, 300, 15), slow = seq(30, 300, 30))
 results <- vector(mode = "list", length = nrow(runs))
 for (j in seq_len(nrow(runs))) {
 # j <- 1
@@ -145,6 +148,9 @@ sprintf("j:%1.0f  %2.0f/%2.0f  ICAGR:%1.3f  dd:%5.3f%%  lake: %1.3f bliss:%1.3f 
         j, slow_lag, fast_lag, ICAGR, drawdown, bliss, lake, end_val, trade_test)
 
 }   # optimization loop end
+})
+
+
 
 # the promised land of pretty graphs
 SPdata |>
@@ -160,13 +166,28 @@ SPdata |>
 results <- results |>
   transpose() |>
   as_tibble(.name_repair = "universal")
-colnames() = unlist(str_split("j, slow_lag, fast_lag, ICAGR, drawdown, bliss, lake, end_val, trade_test", ", "))
-results <- as_tibble(results)
-ICAGRs <- pull(results, ICAGR)
-drawdowns <- pull(results, drawdown)
+colnames(results) <- unlist(str_split("j, slow_lag, fast_lag, ICAGR, drawdown, bliss, lake, end_val, trade_test", ", "))
+results <- as_tibble(as.numeric(results))
+ICAGRs <- as.numeric(unlist(results$ICAGR))
+drawdowns <- as.numeric(unlist(results$drawdown))
+Lake <- as.numeric(unlist(results$lake))
+Bliss <- as.numeric(unlist(results$bliss))
+
 results |>
-  ggplot(aes(x = ICAGRs, y = drawdown)) +
-  geom_point(size = 1, shape = 4, alpha = 0.2)
+  ggplot(aes(x = ICAGRs, y = drawdowns)) +
+  geom_point(size = 3, shape = 4)
+
+results |>
+  ggplot(aes(x = Lake, y = Bliss)) +
+  geom_point(size = 3, shape = 4)
+
+results |>
+  ggplot(aes(x = Lake, y = drawdowns)) +
+  geom_point(size = 3, shape = 4)
+
+
+# https://win-vector.com/2015/07/27/efficient-accumulation-in-r/
+# notes on efficient accumulation
 
 #  geom_smooth(method = "lm")
 
