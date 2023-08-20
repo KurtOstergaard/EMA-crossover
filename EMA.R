@@ -1,4 +1,4 @@
-#  long-only exponential moving average crossover trading system from Ed Seykota website
+#  long-only exponential moving average crossover trading system from Ed Seykota
 rm(list=ls())
 library(tidyverse)
 library(lubridate)
@@ -6,7 +6,7 @@ library(tidyquant)
 library(plotly)
 library(Rcpp)
 library(profvis)
-
+start_time <- Sys.time()
 # C code for EMA calculation with no leading NA
 sourceCpp(
   code =
@@ -52,15 +52,16 @@ SPdata_orig <- SPdata
 profvis({
 
 # optimization section
-runs <- expand.grid(fast = seq(15, 300, 15), slow = seq(30, 300, 30))
-results <- vector(mode = "list", length = nrow(runs))
-for (j in seq_len(nrow(runs))) {
-# j <- 1
-SPdata <- SPdata_orig
+runs <- expand.grid(fast = seq(15, 85, 10), slow = seq(150, 325, 25))
+results <- tibble() # vector(mode = "list", length = nrow(runs))
+colnames(results) <- unlist(str_split("j, slow_lag, fast_lag,
+            ICAGR, drawdown, bliss, lake, end_val, trade_test", ", "))
 
+for (j in seq_len(nrow(runs))) {
+SPdata <- SPdata_orig
 # calculate exponential moving averages for low pass filter trade signals
-slow_lag <-  runs$slow[j]  # 150/15 ends with $3,303,931.25
-fast_lag <-  runs$fast[j]  # 325/85 leads to $13,551,818.75
+slow_lag <-  runs$slow[j]  # 15/150 ends with $3,303,931.25
+fast_lag <-  runs$fast[j]  # 85/325 leads to $13,551,818.75
 SPdata$slow <- ewmaRcpp(SPdata$close, slow_lag)
 SPdata$fast <- ewmaRcpp(SPdata$close, fast_lag)
 
@@ -68,7 +69,7 @@ SPdata <- SPdata |>           # EMA crossover
   mutate(cross = fast - slow,
          on = ifelse(cross > 0 & lag(cross) < 0, 1, 0),
          off = ifelse(cross < 0 & lag(cross) > 0, -1, 0))
-SPdata <-  slice(SPdata, 26:n()) # drop first 25 rows to `warm up` EMA
+SPdata <-  slice(SPdata, 26:n()) # drop first 25 rows to 'warm up' EMA
 
 if(SPdata$cross[1] > 0) SPdata$on[1] <- 1    # trade signal details
 SPdata <- SPdata |>
@@ -94,9 +95,16 @@ SPdata$drawdown <- 0 ; buy_amount <- 0 ; buy_price <- 0
 heat <- 0.1  # aka risk budget, is 10% of the book equity for each trade
 ATR_multiplier <- 5 # dynamic risk sizing based on current volatility via ATR
 
-# calculate trade pnl
-for (i in seq_len(nrow(SPdata))){
-  if(i>1) SPdata$closed_pnl[i] = SPdata$closed_pnl[i-1]
+# calculate trade pnl i=1
+if(SPdata$signal[1] == 1){
+  buy_amount = plyr::round_any((SPdata$closed_pnl[[1]] *
+      heat) / (ATR_multiplier * SPdata$atr_EMA[[1]]), 250, f = round)
+  SPdata$buy_amount[i] = buy_amount
+  buy_price = SPdata$buy_price[1]
+}
+# calculate trade pnl i>1
+for (i in seq2(2, nrow(SPdata))){
+  SPdata$closed_pnl[i] = SPdata$closed_pnl[i-1]
   if(SPdata$signal[i] == -1){
     SPdata$closed_pnl[i] = SPdata$closed_pnl[i] +
            (SPdata$sell_price[i] - buy_price) * buy_amount
@@ -111,7 +119,7 @@ for (i in seq_len(nrow(SPdata))){
     SPdata$open_pnl[i] = (SPdata$close[i] - buy_price) * buy_amount
   }
   SPdata$equity[i] <- SPdata$open_pnl[i] + SPdata$closed_pnl[i]
-  if(i>1) SPdata$highwater[i] <- pmax(SPdata$equity[i], SPdata$highwater[i-1])
+  SPdata$highwater[i] <- pmax(SPdata$equity[i], SPdata$highwater[i-1])
   SPdata$water[i] <- SPdata$highwater[i] - SPdata$equity[i]
   SPdata$drawdown[i] <- SPdata$water[i] / SPdata$highwater[i]
 }
@@ -141,68 +149,83 @@ ICAGR <- if(ratio <= 0) 0 else log(ratio)/ date_range
 drawdown <- max(SPdata$drawdown)
 lake <- sum(SPdata$water) / sum(SPdata$equity)
 bliss <- ICAGR / drawdown
-tmp <- list(j, slow_lag, fast_lag, ICAGR, drawdown, bliss, lake, end_val, trade_test)
-results[[j]] <- tmp
+results[j,1:9] <- as_tibble_row(c(
+  j=j, slow_lag=slow_lag, fast_lag=fast_lag, ICAGR=ICAGR, drawdown=drawdown,
+  bliss=bliss, lake=lake, end_val=end_val, trade_test=trade_test),
+  .name_repair = "universal")
 
-sprintf("j:%1.0f  %2.0f/%2.0f  ICAGR:%1.3f  dd:%5.3f%%  lake: %1.3f bliss:%1.3f  $%1.2f  tt %1.of",
-        j, slow_lag, fast_lag, ICAGR, drawdown, bliss, lake, end_val, trade_test)
+}       # optimization loop end
+}) # profvis
 
-}   # optimization loop end
-})
-
-
+end_time <- Sys.time() ;forever <- end_time - start_time
+secs <- forever  / nrow(runs)
+sprintf("Yo, %1.2f  total and %1.2f  per run, %i runs", forever, secs, nrow(runs))
 
 # the promised land of pretty graphs
-SPdata |>
+SPdata |>        # S&P
   ggplot(aes(x = date, y = close)) +
-  geom_point(size = 1, shape = 4, alpha = 0.2) +
-  geom_smooth(method = "lm")
+  geom_line(size = 1, alpha = 0.5)
+
+trades |>       # trades
+  ggplot(aes(x = date)) +
+  geom_segment(aes(x=buy_date, y=buy_price, xend=sell_date, yend=sell_price,
+                    color="black"))
+
+SPdata |>        # lake
+  ggplot(aes(x = date)) +
+  geom_ribbon(aes(ymin=equity, ymax=highwater, x=date, fill = "band"), alpha = 0.9)+
+  scale_color_manual("", values="grey12")+
+  scale_fill_manual("", values="red")
+
+SPdata |>       # equity and highwater
+  mutate(close_big = close*10500) |>
+  ggplot(aes(x = date)) +
+  geom_line(aes(y = equity),size = 1,  alpha = 0.9) +
+  geom_point(aes(y=highwater), size=1, shape = 4, alpha=0.1, color="black") +
+  geom_line(aes(y=close_big), size=1, alpha=0.2)
+
+# check for second scale
+# https://stackoverflow.com/questions/59956953/plotting-secondary-axis-using-ggplot
 
 SPdata |>
-  ggplot(aes(x = date, y = highwater)) +
-  geom_point(size = 1, shape = 4, alpha = 0.2) +
+  ggplot(aes(x = date)) +
+  geom_line(aes(y = equity), size = 1, alpha = 0.8) +
+  geom_line(aes(y = highwater), size=1, alpha=0.2)
+
+results |>
+  ggplot(aes(x = ICAGR, y = drawdown)) +
+  geom_point(size = 3, shape = 4)
+
+results |>
+  ggplot(aes(x = lake, y = bliss)) +
+  geom_point(size = 3, shape = 4)
+
+results |>
+  ggplot(aes(x = lake, y = drawdown)) +
+  geom_point(size = 3, shape = 4) +
   geom_smooth(method = "lm")
 
-results <- results |>
-  transpose() |>
-  as_tibble(.name_repair = "universal")
-colnames(results) <- unlist(str_split("j, slow_lag, fast_lag, ICAGR, drawdown, bliss, lake, end_val, trade_test", ", "))
-results <- as_tibble(as.numeric(results))
-ICAGRs <- as.numeric(unlist(results$ICAGR))
-drawdowns <- as.numeric(unlist(results$drawdown))
-Lake <- as.numeric(unlist(results$lake))
-Bliss <- as.numeric(unlist(results$bliss))
-
 results |>
-  ggplot(aes(x = ICAGRs, y = drawdowns)) +
+  ggplot(aes(x = ICAGR, y = bliss)) +
   geom_point(size = 3, shape = 4)
 
-results |>
-  ggplot(aes(x = Lake, y = Bliss)) +
-  geom_point(size = 3, shape = 4)
+pnl <- results |>
+  select(slow_lag, fast_lag, end_val) |>
+  pivot_wider(names_from = slow_lag, values_from = end_val) |>
+  as.matrix()
 
-results |>
-  ggplot(aes(x = Lake, y = drawdowns)) +
-  geom_point(size = 3, shape = 4)
-
+plot_ly(z = pnl) |> add_surface(
+  contours = list(
+    z = list(
+    show=TRUE,
+    usecolormap=TRUE,
+    highlightcolor="#ff0000",
+    project=list(z=TRUE)
+    )
+  )
+)
 
 # https://win-vector.com/2015/07/27/efficient-accumulation-in-r/
 # notes on efficient accumulation
 
-#  geom_smooth(method = "lm")
 
-
-# v <- plot_ly(z = volcano, type = "surface")
-# v
-
-# qq <- plot_ly(z = matroller) |> add_surface(
-#   contours = list(
-#     z = list(
-#     show=TRUE,
-#     usecolormap=TRUE,
-#     highlightcolor="#ff0000",
-#     project=list(z=TRUE)
-#     )
-#   )
-# )
-# qq
