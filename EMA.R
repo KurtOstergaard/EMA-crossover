@@ -53,7 +53,9 @@ SPdata_orig <- SPdata
 # profvis({
 
 # optimization section
-runs <- expand.grid(fast = seq(15, 85, 10), slow = seq(150, 325, 25))
+runs <- expand.grid(fast = seq(15, 85, 70), slow = seq(150, 325, 175))
+#  seq(20, 400, 10), seq(100, 800, 20)) # >10 min   70/360 =>$13M, 11% ICAGR!
+# future run seq(15, 150, 5) seq(85, 360, 5) ~10+ mins
 results <- tibble() # vector(mode = "list", length = nrow(runs))
 colnames(results) <- unlist(str_split("j, slow_lag, fast_lag,
             ICAGR, drawdown, bliss, lake, end_val, trade_test", ", "))
@@ -99,7 +101,7 @@ for (j in seq_len(nrow(runs))) {
   # calculate trade pnl i=1
   if(SPdata$signal[1] == 1){
     buy_amount = plyr::round_any((SPdata$closed_pnl[[1]] *
-                                    heat) / (ATR_multiplier * SPdata$atr_EMA[[1]]), 250, f = round)
+                heat) / (ATR_multiplier * SPdata$atr_EMA[[1]]), 250, f = round)
     SPdata$buy_amount[i] = buy_amount
     buy_price = SPdata$buy_price[1]
   }
@@ -113,7 +115,7 @@ for (j in seq_len(nrow(runs))) {
       SPdata$open_pnl[i] = 0
     } else if(SPdata$signal[i] == 1){
       buy_amount = plyr::round_any((SPdata$closed_pnl[[i]] *
-                                      heat) / (ATR_multiplier * SPdata$atr_EMA[[i]]), 250, f = round)
+              heat) / (ATR_multiplier * SPdata$atr_EMA[[i]]), 250, f = round)
       SPdata$buy_amount[i] = buy_amount
       buy_price = SPdata$buy_price[i]
     } else {
@@ -160,7 +162,7 @@ for (j in seq_len(nrow(runs))) {
 
 end_time <- Sys.time() ;forever <- end_time - start_time
 secs <- forever  / nrow(runs)
-sprintf("Yo, %1.2f total and %1.4f  per run, %i runs", forever, secs, nrow(runs))
+sprintf("Yo, %1.2f total time and %1.4f per run, %i runs", forever, secs, nrow(runs))
 
 # the promised land of pretty graphs
 SPdata |>        # S&P
@@ -193,29 +195,41 @@ SPdata |>
   geom_line(aes(y = equity), size = 1, alpha = 0.8) +
   geom_line(aes(y = highwater), size=1, alpha=0.2)
 
-results |>
+rzlt <- results|>
+  filter( slow_lag > fast_lag)
+
+rzlt |>
   ggplot(aes(x = ICAGR, y = drawdown)) +
   geom_point(size = 3, shape = 4)
 
-results |>
+rzlt |>
   ggplot(aes(x = lake, y = bliss)) +
   geom_point(size = 3, shape = 4)
 
-results |>
+rzlt |>
   ggplot(aes(x = lake, y = drawdown)) +
-  geom_point(size = 3, shape = 4) +
-  geom_smooth(method = "lm")
+  geom_point(size = 3, shape = 4)
 
-results |>
+#  geom_smooth(method = "lm")
+
+rzlt |>
+  ggplot(aes(x = ICAGR, y = lake)) +
+  geom_point(size = 3, shape = 4)
+
+rzlt |>
   ggplot(aes(x = ICAGR, y = bliss)) +
   geom_point(size = 3, shape = 4)
 
-pnl <- results |>
+pnl <- rzlt |>
   select(slow_lag, fast_lag, end_val) |>
   pivot_wider(names_from = slow_lag, values_from = end_val) |>
   as.matrix()
+blip <-  sort(unique(pnl[,1]))
+rownames(pnl) <- blip
+pnl <- pnl[,-1]
 
-plot_ly(z = pnl) |> add_surface(
+
+plot_ly(z = ~pnl) |> add_surface(
   contours = list(
     z = list(
     show=TRUE,
@@ -225,6 +239,57 @@ plot_ly(z = pnl) |> add_surface(
     )
   )
 )
+
+happy <- rzlt |>
+  select(slow_lag, fast_lag, bliss) |>
+  pivot_wider(names_from = slow_lag, values_from = bliss) |>
+  as.matrix()
+happy <- happy[,-1]
+xax <- sort(unique(rzlt$slow_lag))
+yax <- sort(unique(rzlt$fast_lag))
+
+plot_ly(z = happy, x=xax, y=yax, type = "surface") |>
+  layout(scene = list(
+    xaxis=list(title="slow"),
+    yaxis=list(title="fast", autorange="reversed"),
+    zaxis=list(title="Bliss")
+  ))
+
+
+fig <- plot_ly(z = happy, x=xax, y=yax) |> add_surface(
+  contours = list(
+    z = list(
+      show=TRUE,
+      usecolormap=TRUE,
+      highlightcolor="#ff0000",
+      project=list(z=TRUE)
+    )
+  )
+)
+fig <- fig |>  layout(
+  scene = list(
+    xaxis=list(title="slow"),
+    yaxis=list(title="fast", autorange="reversed"),
+    zaxis=list(title="Bliss")
+  ))
+
+fig
+
+
+plot_ly(z = ~happy) |> add_surface(
+  contours = list(
+    z = list(
+      show=TRUE,
+      usecolormap=TRUE,
+      highlightcolor="#ff0000",
+      project=list(z=TRUE)
+    )
+  )
+)
+
+cc <-  cor(rzlt$ICAGR, rzlt$drawdown, method="pearson")
+cc
+plot_ly(z = volcano, type = "surface")
 
 # https://win-vector.com/2015/07/27/efficient-accumulation-in-r/
 # notes on efficient accumulation
