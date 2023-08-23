@@ -102,7 +102,7 @@ for (j in seq_len(nrow(runs))) {
   if(SPdata$signal[1] == 1){
     buy_amount = plyr::round_any((SPdata$closed_pnl[[1]] *
                 heat) / (ATR_multiplier * SPdata$atr_EMA[[1]]), 250, f = round)
-    SPdata$buy_amount[i] = buy_amount
+    SPdata$buy_amount[1] = buy_amount  #   [i] changed to [1] Double check!!!!!!!!!!!!!!!!!!
     buy_price = SPdata$buy_price[1]
   }
   # calculate trade pnl i>1
