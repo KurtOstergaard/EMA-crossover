@@ -7,6 +7,11 @@ library(plotly)
 library(Rcpp)
 library(profvis)
 library(rlang)
+library(ggrepel)
+
+options(ggrepel.max.overlaps = Inf)      # ggrepel options for ggplot2
+theme_set(theme_light())                # ggplot theme or _bw()
+
 start_time <- Sys.time()
 # C code for EMA calculation with no leading NA
 sourceCpp(
