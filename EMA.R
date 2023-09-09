@@ -172,7 +172,7 @@ sprintf("Yo, %1.2f total time and %1.4f per run, %i runs", forever, secs, nrow(r
 # the promised land of pretty graphs
 SPdata |>        # S&P
   ggplot(aes(x = date, y = close)) +
-  geom_line(size = 1, alpha = 0.5)
+  geom_line(linewidth = 1, alpha = 0.5)
 
 ggplot() +
   geom_point(data=SPdata, aes(x=date, y=close), alpha=0.2) +
